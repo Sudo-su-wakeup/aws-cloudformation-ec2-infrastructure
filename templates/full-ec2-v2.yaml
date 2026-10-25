@@ -1,0 +1,136 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Full EC2 setup V2 - updated version for practicing stack updates
+
+Resources:
+  # 1. VPC = your private network
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: learning-vpc
+
+  # 2. Internet Gateway = door to the internet
+  MyInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: learning-igw
+
+  # 3. Attach the Internet Gateway to the VPC
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyVPC
+      InternetGatewayId: !Ref MyInternetGateway
+
+  # 4. Public subnet
+  MyPublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: learning-public-subnet
+
+  # 5. Route table
+  MyRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key: Name
+          Value: learning-rt
+
+  # 6. Route to the internet
+  InternetRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref MyRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref MyInternetGateway
+
+  # 7. Connect the route table to the subnet
+  SubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref MyPublicSubnet
+      RouteTableId: !Ref MyRouteTable
+
+  # 8. Security group
+  # UPDATE 1: added a new rule for SSH (port 22)
+  MySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP and SSH
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: learning-sg
+
+  # 9. EC2 instance
+  # UPDATE 2: changed the Name tag and added an Environment tag
+  MyEC2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: InternetRoute
+    Properties:
+      InstanceType: t3.micro
+      ImageId: "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}"
+      SubnetId: !Ref MyPublicSubnet
+      SecurityGroupIds:
+        - !Ref MySecurityGroup
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          dnf install -y httpd
+          systemctl start httpd
+          systemctl enable httpd
+          echo "<h1>Hello from CloudFormation!</h1>" > /var/www/html/index.html
+      Tags:
+        - Key: Name
+          Value: learning-ec2-v2
+        - Key: Environment
+          Value: dev
+
+  # 10. UPDATE 3: a NEW resource - an S3 bucket
+  MyBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      Tags:
+        - Key: Name
+          Value: learning-bucket
+
+Outputs:
+  InstanceId:
+    Description: ID of the EC2 instance
+    Value: !Ref MyEC2Instance
+
+  PublicIP:
+    Description: Public IP of the instance
+    Value: !GetAtt MyEC2Instance.PublicIp
+
+  WebsiteURL:
+    Description: Open this URL in your browser
+    Value: !Sub "http://${MyEC2Instance.PublicIp}"
+
+  # UPDATE 4: a new output for the bucket
+  BucketName:
+    Description: Name of the new S3 bucket
+    Value: !Ref MyBucket
